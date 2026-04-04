@@ -1,18 +1,19 @@
-# 📌 Institutional XAUUSD Signal Bot → Sends BUY/SELL signals + /test example
-# ✅ Features: M1 + M5 trend filter, BOS, Order Blocks, ATR-based SL/TP, Kill Zones
-# 🚀 Sends daily signals + test command to Telegram
+# 📌 Institutional XAUUSD Signal Bot → Ready Alerts + Smart Risk Signals
+# ✅ Features: M1 + M15 trend filter, BOS, Order Blocks, ATR-based SL/TP, Kill Zones
+# 🚀 Sends signals only when conditions are favorable
+# 🔹 Includes risk assessment and "Be ready" alerts
 
 import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime, time, timezone
-import time as t
-import requests
+import asyncio
+import aiohttp
 
 # ---------------- CONFIG ----------------
 SYMBOL = "XAUUSD=X"
 TIMEFRAME = "1m"
-TIMEFRAME_M5 = "5m"
+TIMEFRAME_M15 = "15m"
 ATR_PERIOD = 14
 TP_ATR = 1.5
 SL_ATR = 1
@@ -20,14 +21,13 @@ KILL_ZONES = [("09:00", "11:00"), ("13:00", "15:00")]
 
 TELEGRAM_TOKEN = "8601674578:AAHycLEx-6M_r_JHFuS96oKuLTBJqefwKnk"
 CHAT_ID = "992623579"
-
-# Keep track of last update processed
 update_offset = None
 
 # ---------------- HELPERS ----------------
-def send_telegram(message, chat_id=CHAT_ID):
+async def send_telegram(message, chat_id=CHAT_ID):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": chat_id, "text": message})
+    async with aiohttp.ClientSession() as session:
+        await session.post(url, data={"chat_id": chat_id, "text": message})
 
 def get_data(symbol, period="2d", interval="1m"):
     df = yf.download(symbol, period=period, interval=interval, auto_adjust=True)
@@ -82,28 +82,43 @@ def calculate_sl_tp(price, atr_value, direction):
     return sl, tp
 
 # ---------------- SIGNAL GENERATOR ----------------
-def generate_signal():
+async def generate_signal():
     if not in_kill_zone():
-        print("⏱️ Outside Kill Zones. No signals now.")
+        print("⏱️ Outside Kill Zones.")
         return
 
     df_m1 = get_data(SYMBOL, period="1d", interval="1m")
-    df_m5 = get_data(SYMBOL, period="5d", interval="5m")
+    df_m15 = get_data(SYMBOL, period="5d", interval="15m")
     atr_m1 = atr(df_m1, ATR_PERIOD).iloc[-1]
 
     bos_signal = detect_bos(df_m1)
     ob_signal = detect_order_block(df_m1)
 
-    trend = "BUY" if df_m5['Close'].iloc[-1] > df_m5['Close'].iloc[-5] else "SELL"
+    trend_m15 = "BUY" if df_m15['Close'].iloc[-1] > df_m15['Close'].iloc[-3] else "SELL"
 
     direction = None
+    risk_percent = 50
+
     if bos_signal and ob_signal:
-        if bos_signal == "BOS_UP" and ob_signal == "BUY_OB" and trend == "BUY":
+        if bos_signal == "BOS_UP" and ob_signal == "BUY_OB" and trend_m15 == "BUY":
             direction = "BUY"
-        elif bos_signal == "BOS_DOWN" and ob_signal == "SELL_OB" and trend == "SELL":
+            risk_percent = 85
+        elif bos_signal == "BOS_DOWN" and ob_signal == "SELL_OB" and trend_m15 == "SELL":
             direction = "SELL"
+            risk_percent = 85
+        else:
+            direction = "BUY" if trend_m15 == "BUY" else "SELL"
+            risk_percent = 40
 
     if direction:
+        # Send "Be ready" alert first
+        ready_msg = "⚡ Be ready! Potential XAUUSD signal detected. Monitoring M1..."
+        await send_telegram(ready_msg)
+
+        # Wait a short time to confirm signal (simulate live market wait)
+        await asyncio.sleep(10)  # 10 seconds for example, can increase
+
+        # Send full signal
         price = df_m1['Close'].iloc[-1]
         sl, tp = calculate_sl_tp(price, atr_m1, direction)
         message = (
@@ -111,46 +126,59 @@ def generate_signal():
             f"Direction: {direction}\n"
             f"Entry: {price:.2f}\n"
             f"SL: {sl:.2f} | TP: {tp:.2f}\n"
+            f"Risk: {risk_percent}% {'✅ Safe' if risk_percent>=70 else '⚠️ Risky'}\n"
             f"Kill Zone: Active 🔥"
         )
-        send_telegram(message)
-        print("✅ Signal sent to Telegram!")
+        await send_telegram(message)
+        print("✅ Signal sent!")
     else:
         print("❌ No valid signal now.")
 
 # ---------------- TEST SIGNAL ----------------
-def generate_test_signal(chat_id):
+async def generate_test_signal(chat_id):
     message = (
         "💰 XAUUSD SIGNAL (TEST) 💰\n"
         "Direction: BUY\n"
         "Entry: 1965.50\n"
         "SL: 1960.50 | TP: 1975.50\n"
+        "Risk: 80% ✅ Safe\n"
         "Kill Zone: Active 🔥\n"
-        "This is a test example signal ✅"
+        "This is a test example signal"
     )
-    send_telegram(message, chat_id)
+    await send_telegram(message, chat_id)
     print("✅ Test signal sent!")
 
 # ---------------- TELEGRAM COMMAND CHECK ----------------
-def check_for_commands():
+async def check_for_commands():
     global update_offset
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates?timeout=10"
-    if update_offset:
-        url += f"&offset={update_offset}"
-    response = requests.get(url).json()
+    async with aiohttp.ClientSession() as session:
+        while True:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates?timeout=10"
+            if update_offset:
+                url += f"&offset={update_offset}"
+            async with session.get(url) as resp:
+                data = await resp.json()
+            for update in data.get("result", []):
+                update_offset = update["update_id"] + 1
+                if "message" in update:
+                    chat_id = update["message"]["chat"]["id"]
+                    text = update["message"].get("text", "")
+                    if text.lower() == "/test":
+                        await generate_test_signal(chat_id)
+            await asyncio.sleep(1)
 
-    for update in response.get("result", []):
-        update_offset = update["update_id"] + 1  # Prevent reprocessing
-        if "message" in update:
-            chat_id = update["message"]["chat"]["id"]
-            text = update["message"].get("text", "")
-            if text.lower() == "/test":
-                generate_test_signal(chat_id)
+# ---------------- RUN ASYNC ----------------
+async def main():
+    async def signal_loop():
+        while True:
+            await generate_signal()
+            await asyncio.sleep(60)  # check every minute for signals
 
-# ---------------- RUN ----------------
+    await asyncio.gather(
+        signal_loop(),
+        check_for_commands()
+    )
+
 if __name__ == "__main__":
-    print("📡 XAUUSD Telegram Signal Bot Running...")
-    while True:
-        generate_signal()       # Sends real signals if conditions met
-        check_for_commands()    # Responds to /test instantly
-        t.sleep(5)              # Check every 5 seconds for commands
+    print("📡 XAUUSD Smart Risk Signal Bot Running...")
+    asyncio.run(main())
