@@ -1,15 +1,15 @@
-# 📌 Institutional XAUUSD Signal Bot → Ready Alerts + Smart Risk Signals
-# ✅ Fully synchronous (no aiohttp), works on Railway
+# 📌 Institutional Gold Futures XAUUSD/GC=F Signal Bot → Safe Scalping Alerts
+# ✅ Works with GC=F on Yahoo, auto-checks for data, fully synchronous, deployable on Railway
 
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime, time as dt_time, timezone
+from datetime import datetime, time, timezone
 import time
 import requests
 
 # ---------------- CONFIG ----------------
-SYMBOL = "XAUUSD=X"
+SYMBOL = "GC=F"           # Gold Futures (reliable symbol)
 TIMEFRAME = "1m"
 TIMEFRAME_M15 = "15m"
 ATR_PERIOD = 14
@@ -23,13 +23,23 @@ update_offset = None
 
 # ---------------- HELPERS ----------------
 def send_telegram(message, chat_id=CHAT_ID):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": chat_id, "text": message})
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": chat_id, "text": message})
+    except Exception as e:
+        print(f"⚠️ Telegram send failed: {e}")
 
 def get_data(symbol, period="2d", interval="1m"):
-    df = yf.download(symbol, period=period, interval=interval, auto_adjust=True)
-    df.dropna(inplace=True)
-    return df
+    try:
+        df = yf.download(symbol, period=period, interval=interval, auto_adjust=True)
+        if df.empty:
+            print(f"⚠️ No data for {symbol}, skipping...")
+            return None
+        df.dropna(inplace=True)
+        return df
+    except Exception as e:
+        print(f"⚠️ Error fetching {symbol}: {e}")
+        return None
 
 def atr(df, period=14):
     high_low = df['High'] - df['Low']
@@ -41,8 +51,8 @@ def atr(df, period=14):
 def in_kill_zone():
     now = datetime.now(timezone.utc).time()
     for start, end in KILL_ZONES:
-        start_t = dt_time(int(start.split(":")[0]), int(start.split(":")[1]))
-        end_t = dt_time(int(end.split(":")[0]), int(end.split(":")[1]))
+        start_t = time(int(start.split(":")[0]), int(start.split(":")[1]))
+        end_t = time(int(end.split(":")[0]), int(end.split(":")[1]))
         if start_t <= now <= end_t:
             return True
     return False
@@ -86,6 +96,11 @@ def generate_signal():
 
     df_m1 = get_data(SYMBOL, period="1d", interval="1m")
     df_m15 = get_data(SYMBOL, period="5d", interval="15m")
+
+    if df_m1 is None or df_m15 is None:
+        print("❌ Skipping signal: No data available.")
+        return
+
     atr_m1 = atr(df_m1, ATR_PERIOD).iloc[-1]
 
     bos_signal = detect_bos(df_m1)
@@ -108,18 +123,17 @@ def generate_signal():
             risk_percent = 40
 
     if direction:
-        # Send "Be ready" alert first
-        ready_msg = "⚡ Be ready! Potential XAUUSD signal detected. Monitoring M1..."
+        # Be ready alert
+        ready_msg = "⚡ Be ready! Potential Gold signal detected. Monitoring M1..."
         send_telegram(ready_msg)
 
-        # Wait a few seconds to confirm signal
-        time.sleep(10)
+        time.sleep(10)  # short confirmation wait
 
         # Send full signal
         price = df_m1['Close'].iloc[-1]
         sl, tp = calculate_sl_tp(price, atr_m1, direction)
         message = (
-            f"💰 XAUUSD SIGNAL 💰\n"
+            f"💰 Gold Futures Signal 💰\n"
             f"Direction: {direction}\n"
             f"Entry: {price:.2f}\n"
             f"SL: {sl:.2f} | TP: {tp:.2f}\n"
@@ -134,7 +148,7 @@ def generate_signal():
 # ---------------- TEST SIGNAL ----------------
 def generate_test_signal(chat_id):
     message = (
-        "💰 XAUUSD SIGNAL (TEST) 💰\n"
+        "💰 Gold Signal (TEST) 💰\n"
         "Direction: BUY\n"
         "Entry: 1965.50\n"
         "SL: 1960.50 | TP: 1975.50\n"
@@ -151,19 +165,22 @@ def check_for_commands():
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates?timeout=10"
     if update_offset:
         url += f"&offset={update_offset}"
-    response = requests.get(url).json()
-    for update in response.get("result", []):
-        update_offset = update["update_id"] + 1
-        if "message" in update:
-            chat_id = update["message"]["chat"]["id"]
-            text = update["message"].get("text", "")
-            if text.lower() == "/test":
-                generate_test_signal(chat_id)
+    try:
+        response = requests.get(url).json()
+        for update in response.get("result", []):
+            update_offset = update["update_id"] + 1
+            if "message" in update:
+                chat_id = update["message"]["chat"]["id"]
+                text = update["message"].get("text", "")
+                if text.lower() == "/test":
+                    generate_test_signal(chat_id)
+    except Exception as e:
+        print(f"⚠️ Telegram command check failed: {e}")
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
-    print("📡 XAUUSD Smart Risk Signal Bot Running...")
+    print("📡 Gold Smart Risk Signal Bot Running...")
     while True:
-        generate_signal()       # only sends when safe/risk conditions are met
-        check_for_commands()    # respond to /test
-        time.sleep(60)          # check every 1 min
+        generate_signal()
+        check_for_commands()
+        time.sleep(60)  # check every 1 minute
