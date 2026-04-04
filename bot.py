@@ -1,14 +1,13 @@
-# 📌 Institutional Gold Futures GC=F Signal Bot → Fixed Version
+# 📌 Institutional Gold Futures GC=F Signal Bot → Instant /test
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, time as dt_time, timezone
 import time
+import threading
 import requests
 
 # ---------------- CONFIG ----------------
 SYMBOL = "GC=F"
-TIMEFRAME = "1m"
-TIMEFRAME_M15 = "15m"
 ATR_PERIOD = 14
 TP_ATR = 1.5
 SL_ATR = 1
@@ -93,18 +92,15 @@ def calculate_sl_tp(price, atr_value, direction):
 # ---------------- SIGNAL GENERATOR ----------------
 def generate_signal():
     if not in_kill_zone():
-        print("⏱️ Outside Kill Zones.")
         return
 
     df_m1 = get_data(SYMBOL, period="1d", interval="1m")
     df_m15 = get_data(SYMBOL, period="5d", interval="15m")
     if df_m1 is None or df_m15 is None:
-        print("❌ No data available, skipping.")
         return
 
     atr_m1 = atr(df_m1, ATR_PERIOD).iloc[-1]
     if pd.isna(atr_m1):
-        print("⚠️ ATR is NaN, skipping.")
         return
 
     bos_signal = detect_bos(df_m1)
@@ -114,7 +110,6 @@ def generate_signal():
     direction = None
     risk_percent = 50
 
-    # ✅ Force scalar string check
     if isinstance(bos_signal, str) and isinstance(ob_signal, str):
         if bos_signal == "BOS_UP" and ob_signal == "BUY_OB" and trend_m15 == "BUY":
             direction = "BUY"
@@ -128,7 +123,7 @@ def generate_signal():
 
     if direction:
         send_telegram("⚡ Be ready! Potential Gold signal detected. Monitoring M1...")
-        time.sleep(10)
+        time.sleep(5)
         price = df_m1['Close'].iloc[-1]
         sl, tp = calculate_sl_tp(price, atr_m1, direction)
         message = (
@@ -140,9 +135,6 @@ def generate_signal():
             f"Kill Zone: Active 🔥"
         )
         send_telegram(message)
-        print("✅ Signal sent!")
-    else:
-        print("❌ No valid signal now.")
 
 # ---------------- TEST SIGNAL ----------------
 def generate_test_signal(chat_id):
@@ -156,12 +148,11 @@ def generate_test_signal(chat_id):
         "This is a test example signal"
     )
     send_telegram(message, chat_id)
-    print("✅ Test signal sent!")
 
 # ---------------- TELEGRAM COMMAND CHECK ----------------
 def check_for_commands():
     global update_offset
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates?timeout=10"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates?timeout=5"
     if update_offset:
         url += f"&offset={update_offset}"
     try:
@@ -176,13 +167,29 @@ def check_for_commands():
     except Exception as e:
         print(f"⚠️ Telegram command check failed: {e}")
 
-# ---------------- RUN ----------------
-if __name__ == "__main__":
-    print("📡 Gold Smart Risk Signal Bot Running...")
+# ---------------- THREADS ----------------
+def run_signals_loop():
     while True:
         try:
             generate_signal()
+        except Exception as e:
+            print("⚠️ Signal runtime error:", e)
+        time.sleep(60)  # signals every 1 min
+
+def run_commands_loop():
+    while True:
+        try:
             check_for_commands()
         except Exception as e:
-            print("⚠️ Runtime error:", e)
-        time.sleep(60)
+            print("⚠️ Command runtime error:", e)
+        time.sleep(2)  # check commands fast
+
+# ---------------- RUN ----------------
+if __name__ == "__main__":
+    print("📡 Gold Smart Risk Signal Bot Running (Instant /test)...")
+    threading.Thread(target=run_signals_loop, daemon=True).start()
+    threading.Thread(target=run_commands_loop, daemon=True).start()
+
+    # Keep main alive
+    while True:
+        time.sleep(1)
