@@ -9,7 +9,7 @@ import pytz
 
 # ---------------- CONFIG ----------------
 SYMBOL = "XAU/USD"   # Gold
-API_KEY = "ab9ad3eac834482c84366b4e57ffefa7"  # Twelve Data API key
+API_KEY = "c3c3a13b07cb486b81622aa58a73e9c0"  # Twelve Data API key
 TELEGRAM_TOKEN = "8601674578:AAHycLEx-6M_r_JHFuS96oKuLTBJqefwKnk"
 CHAT_ID = "992623579"
 
