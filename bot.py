@@ -1,10 +1,11 @@
-# 🚀 VIP ELITE SIGNAL BOT (NO AUTO TRADING - HIGH ACCURACY)
+# 🚀 VIP PRO ELITE SIGNAL BOT (NO AUTO TRADING - HIGH ACCURACY)
 
 import requests
 import pandas as pd
 import time
 import threading
 from datetime import datetime
+import pytz
 
 # ---------------- CONFIG ----------------
 SCALPING_SYMBOLS = ["XAU/USD", "BTC/USD"]
@@ -14,12 +15,13 @@ SPOT_SYMBOLS = ["ETH/USDT", "SOL/USDT"]
 API_KEY = "ab9ad3eac834482c84366b4e57ffefa7"
 
 TELEGRAM_TOKEN = "8601674578:AAHycLEx-6M_r_JHFuS96oKuLTBJqefwKnk"
-CHAT_ID = "992623579"
+CHAT_ID = "992623579"  # VIP channel/group ID
 
 ATR_PERIOD = 14
-MIN_CONFIDENCE = 85
+MIN_CONFIDENCE = 90  # PRO signals only
 
 last_signal = {}
+last_sl_tp = {}
 update_offset = None
 
 # ---------------- TELEGRAM ----------------
@@ -32,8 +34,9 @@ def send_telegram(msg):
 
 # ---------------- SESSION FILTER ----------------
 def is_killzone():
-    hour = datetime.utcnow().hour
-    return (7 <= hour <= 10) or (13 <= hour <= 16)
+    dubai = pytz.timezone("Asia/Dubai")
+    hour = datetime.now(dubai).hour
+    return (11 <= hour <= 14) or (16 <= hour <= 19)
 
 # ---------------- DATA ----------------
 def fetch_data(symbol, interval):
@@ -69,9 +72,6 @@ def ema(df, period=50):
 
 def momentum(df):
     return abs(df['close'].iloc[-1] - df['close'].iloc[-5])
-
-def trend(df):
-    return "BUY" if df['close'].iloc[-1] > df['close'].iloc[-5] else "SELL"
 
 # ---------------- SMART MONEY ----------------
 def detect_bos(df):
@@ -130,9 +130,12 @@ def generate_signal(symbol, interval, label):
         return
 
     direction = bos if bos else trend_dir
-
     key = f"{symbol}_{label}"
+
+    # Only send new signal if direction changed
     if last_signal.get(key) == direction:
+        # Check SL/TP hit simulation
+        check_sl_tp(symbol, price, label)
         return
 
     # ENTRY ZONE
@@ -146,8 +149,11 @@ def generate_signal(symbol, interval, label):
         sl = price + 0.6 * atr_val
         tp = price - 1.2 * atr_val
 
+    # Save last SL/TP for tracking
+    last_sl_tp[key] = {'sl': sl, 'tp': tp}
+
     msg = (
-        f"🚀 VIP SIGNAL\n"
+        f"🚀 VIP PRO SIGNAL\n"
         f"━━━━━━━━━━━━━━━\n"
         f"📊 {symbol} ({label})\n"
         f"📍 {direction}\n"
@@ -160,6 +166,22 @@ def generate_signal(symbol, interval, label):
 
     send_telegram(msg)
     last_signal[key] = direction
+
+# ---------------- SL/TP CHECK ----------------
+def check_sl_tp(symbol, price, label):
+    key = f"{symbol}_{label}"
+    if key not in last_sl_tp:
+        return
+
+    sl = last_sl_tp[key]['sl']
+    tp = last_sl_tp[key]['tp']
+
+    if price <= sl:
+        send_telegram(f"⚠️ SL HIT for {symbol} ({label}) at {price:.2f}")
+        last_sl_tp.pop(key)
+    elif price >= tp:
+        send_telegram(f"✅ TP HIT for {symbol} ({label}) at {price:.2f}")
+        last_sl_tp.pop(key)
 
 # ---------------- LOOPS ----------------
 def run_scalping():
@@ -195,7 +217,7 @@ def check_commands():
                 text = upd["message"].get("text", "").lower()
 
                 if text == "/test":
-                    send_telegram("🔥 VIP BOT ACTIVE")
+                    send_telegram("🔥 VIP PRO BOT ACTIVE")
 
             update_offset = upd["update_id"] + 1
     except:
@@ -208,7 +230,7 @@ def run_commands():
 
 # ---------------- START ----------------
 if __name__ == "__main__":
-    print("🚀 VIP BOT RUNNING...")
+    print("🚀 VIP PRO BOT RUNNING...")
 
     threading.Thread(target=run_scalping, daemon=True).start()
     threading.Thread(target=run_futures, daemon=True).start()
