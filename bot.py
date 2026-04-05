@@ -176,24 +176,30 @@ def generate_signal():
 # ---------------- COMMANDS FIX ----------------
 def check_commands():
     global update_offset
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-    if update_offset:
-        url += f"?offset={update_offset}"
-    res = requests.get(url).json()
-    for upd in res.get("result", []):
-        if "message" in upd:
-            chat_id = upd["message"]["chat"]["id"]
-            text = upd["message"].get("text", "").lower()
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+            if update_offset:
+                url += f"?offset={update_offset}"
+            res = requests.get(url, timeout=10).json()
 
-            # Repeatable commands
-            if text == "/test":
-                send_telegram("✅ FAST PRO SNIPER BOT ACTIVE 🔥")
-            if text == "/force":
-                send_telegram("⚡ FORCED SNIPER SIGNAL TEST...")
-                generate_signal()
+            for upd in res.get("result", []):
+                if "message" in upd:
+                    chat_id = upd["message"]["chat"]["id"]
+                    text = upd["message"].get("text", "").lower()
 
-        # Always update offset to ignore older messages
-        update_offset = upd["update_id"] + 1
+                    if text == "/test":
+                        send_telegram("✅ FAST PRO SNIPER BOT ACTIVE 🔥")
+                    elif text == "/force":
+                        send_telegram("⚡ FORCED SNIPER SIGNAL TEST...")
+                        generate_signal()
+
+                update_offset = upd["update_id"] + 1
+
+        except Exception as e:
+            print("Command error:", e)
+
+        time.sleep(1)
 
 # ---------------- THREADS ----------------
 def run_signals():
@@ -204,15 +210,10 @@ def run_signals():
             print("Signal Error:", e)
         time.sleep(10)  # fast scan
 
-def run_commands():
-    while True:
-        check_commands()
-        time.sleep(2)
-
 # ---------------- RUN ----------------
 if __name__ == "__main__":
     print("🚀 FAST PRO SNIPER BOT RUNNING...")
     threading.Thread(target=run_signals, daemon=True).start()
-    threading.Thread(target=run_commands, daemon=True).start()
+    threading.Thread(target=check_commands, daemon=True).start()
     while True:
         time.sleep(1)
