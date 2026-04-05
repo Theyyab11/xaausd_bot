@@ -173,7 +173,7 @@ def generate_signal():
         send_telegram(msg)
         last_signal_time[best_asset] = time.time()
 
-# ---------------- COMMANDS ----------------
+# ---------------- COMMANDS FIX ----------------
 def check_commands():
     global update_offset
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
@@ -181,14 +181,19 @@ def check_commands():
         url += f"?offset={update_offset}"
     res = requests.get(url).json()
     for upd in res.get("result", []):
-        update_offset = upd["update_id"] + 1
         if "message" in upd:
+            chat_id = upd["message"]["chat"]["id"]
             text = upd["message"].get("text", "").lower()
+
+            # Repeatable commands
             if text == "/test":
                 send_telegram("✅ FAST PRO SNIPER BOT ACTIVE 🔥")
             if text == "/force":
                 send_telegram("⚡ FORCED SNIPER SIGNAL TEST...")
                 generate_signal()
+
+        # Always update offset to ignore older messages
+        update_offset = upd["update_id"] + 1
 
 # ---------------- THREADS ----------------
 def run_signals():
