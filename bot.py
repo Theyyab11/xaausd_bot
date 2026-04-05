@@ -1,4 +1,4 @@
-# 🚀 XAUUSD VIP SCALPING BOT (PRO VERSION - BUSINESS READY)
+# 🚀 XAUUSD ELITE SNIPER BOT (SMART MONEY VERSION)
 
 import requests
 import pandas as pd
@@ -10,6 +10,7 @@ import yfinance as yf
 
 # ---------------- CONFIG ----------------
 SYMBOL = "GC=F"
+
 TELEGRAM_TOKEN = "8601674578:AAHycLEx-6M_r_JHFuS96oKuLTBJqefwKnk"
 CHAT_ID = "992623579"
 
@@ -28,19 +29,21 @@ def send_telegram(msg):
     except Exception as e:
         print("Telegram error:", e)
 
-# ---------------- SESSION ----------------
-def is_killzone():
-    dubai = pytz.timezone("Asia/Dubai")
-    hour = datetime.now(dubai).hour
-    return (11 <= hour <= 14) or (16 <= hour <= 19)
-
 # ---------------- DATA ----------------
 def fetch_data():
     try:
         df = yf.download(SYMBOL, period="1d", interval="1m")
+
+        if df is None or df.empty:
+            print("❌ No data from Yahoo")
+            return None
+
         df = df.dropna()
-        df.columns = ["open","high","low","close","adj close","volume"]
+        df.columns = [c.lower() for c in df.columns]
+
+        print(f"✅ PRICE: {df['close'].iloc[-1]}")
         return df
+
     except Exception as e:
         print("Fetch error:", e)
         return None
@@ -60,36 +63,55 @@ def ema(df, period=50):
 def momentum(df):
     return abs(df['close'].iloc[-1] - df['close'].iloc[-5])
 
+# ---------------- SMART MONEY ----------------
+def detect_bos(df):
+    try:
+        last = df['close'].iloc[-1]
+        high = df['high'].iloc[-3:-1].max()
+        low = df['low'].iloc[-3:-1].min()
+
+        if last > high:
+            return "BUY"
+        elif last < low:
+            return "SELL"
+    except:
+        pass
+    return None
+
 # ---------------- SIGNAL ENGINE ----------------
 def generate_signal(force=False):
     global last_signal, last_sl_tp
 
     df = fetch_data()
-    if df is None or df.empty:
-        return
+    if df is None:
+        return "❌ Market data unavailable"
 
     atr_val = atr(df).iloc[-1]
     if pd.isna(atr_val) or atr_val == 0:
-        return
+        return "❌ ATR error"
 
     ema50 = ema(df).iloc[-1]
     price = df['close'].iloc[-1]
     mom = momentum(df)
 
-    direction = "BUY" if price > ema50 else "SELL"
+    trend = "BUY" if price > ema50 else "SELL"
+    bos = detect_bos(df)
 
-    confidence = 70
+    direction = bos if bos else trend
+
+    # 🧠 Confidence system
+    confidence = 60
+    if bos: confidence += 20
     if mom > (0.5 * atr_val): confidence += 10
     if mom > (0.8 * atr_val): confidence += 10
 
-    if confidence < MIN_CONFIDENCE and not force:
-        return
+    if not force and confidence < MIN_CONFIDENCE:
+        return None
 
-    # ⚠️ BE READY ALERT
+    # ⚠️ PRE SIGNAL
     if last_signal != direction:
-        send_telegram("⚠️ BE READY - GOLD SNIPER SETUP FORMING...")
+        send_telegram("⚠️ BE READY - SMART MONEY IS MOVING...")
 
-    # ENTRY
     entry_low = price - (0.2 * atr_val)
     entry_high = price + (0.2 * atr_val)
 
@@ -100,43 +122,29 @@ def generate_signal(force=False):
         sl = price + 0.6 * atr_val
         tp = price - 1.2 * atr_val
 
-    msg = (
-        f"🚀 VIP GOLD SNIPER SIGNAL\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"📊 XAUUSD (SCALPING)\n"
-        f"📍 {direction}\n"
-        f"🎯 Entry Zone: {entry_low:.2f} - {entry_high:.2f}\n"
-        f"🛑 Stop Loss: {sl:.2f}\n"
-        f"💰 Take Profit: {tp:.2f}\n"
-        f"⚡ Confidence: {confidence}%\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"Smart Money Flow Confirmed ✔️"
-    )
+    msg = f"""
+🔥 XAUUSD ELITE SNIPER 🔥
+━━━━━━━━━━━━━━━━━━━
+📊 GOLD SCALPING (1M)
 
-    send_telegram(msg)
+📍 DIRECTION: {direction}
+
+🎯 ENTRY ZONE:
+{entry_low:.2f} → {entry_high:.2f}
+
+🛑 STOP LOSS: {sl:.2f}
+💰 TAKE PROFIT: {tp:.2f}
+
+⚡ CONFIDENCE: {confidence}%
+
+🚀 EXECUTE WITH DISCIPLINE
+━━━━━━━━━━━━━━━━━━━
+"""
+
     last_signal = direction
     last_sl_tp = {"sl": sl, "tp": tp}
 
-# ---------------- SL/TP TRACK ----------------
-def check_sl_tp():
-    global last_sl_tp
-
-    if not last_sl_tp:
-        return
-
-    df = fetch_data()
-    if df is None or df.empty:
-        return
-
-    price = df['close'].iloc[-1]
-
-    if price <= last_sl_tp["sl"]:
-        send_telegram(f"⚠️ SL HIT at {price:.2f}")
-        last_sl_tp = None
-
-    elif price >= last_sl_tp["tp"]:
-        send_telegram(f"✅ TP HIT at {price:.2f}")
-        last_sl_tp = None
+    return msg
 
 # ---------------- COMMANDS ----------------
 def check_commands():
@@ -154,20 +162,21 @@ def check_commands():
                 text = upd["message"].get("text", "").lower()
 
                 if text == "/test":
-                    send_telegram("🔥 BOT ACTIVE & RUNNING PERFECTLY")
-
-                elif text == "/status":
-                    send_telegram("🟢 Bot running (XAUUSD live scanning)")
+                    send_telegram("✅ ELITE BOT ACTIVE")
 
                 elif text == "/price":
                     df = fetch_data()
                     if df is not None:
                         price = df['close'].iloc[-1]
-                        send_telegram(f"📊 XAUUSD Price: {price:.2f}")
+                        send_telegram(f"💰 GOLD PRICE: {price:.2f}")
 
                 elif text == "/signal":
-                    send_telegram("⚡ Manual signal request...")
-                    generate_signal(force=True)
+                    send_telegram("⚡ SCANNING FOR SNIPER ENTRY...")
+                    signal = generate_signal(force=True)
+                    send_telegram(signal)
+
+                elif text == "/status":
+                    send_telegram("🟢 BOT RUNNING - SCANNING MARKET LIVE")
 
             update_offset = upd["update_id"] + 1
 
@@ -177,9 +186,9 @@ def check_commands():
 # ---------------- LOOPS ----------------
 def run_bot():
     while True:
-        if is_killzone():
-            generate_signal()
-            check_sl_tp()
+        signal = generate_signal()
+        if signal:
+            send_telegram(signal)
         time.sleep(60)
 
 def run_commands():
@@ -189,7 +198,7 @@ def run_commands():
 
 # ---------------- START ----------------
 if __name__ == "__main__":
-    print("🚀 VIP GOLD BOT RUNNING...")
+    print("🚀 ELITE GOLD BOT RUNNING...")
 
     threading.Thread(target=run_bot, daemon=True).start()
     threading.Thread(target=run_commands, daemon=True).start()
