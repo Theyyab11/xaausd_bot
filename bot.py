@@ -1,52 +1,42 @@
-# 🚀 EXNESS-LIKE SNIPER BOT (XAUUSD + BTCUSD)
+# 🚀 FAST PRO SNIPER BOT (TwelveData Live Prices)
 
 import requests
 import pandas as pd
 import time
 import threading
-from datetime import datetime
 
 # ---------------- CONFIG ----------------
-SYMBOLS = {
-    "XAUUSD": "XAUUSD",
-    "BTCUSD": "BTCUSD"
-}
-
+SYMBOLS = ["XAU/USD", "BTC/USD"]  # your Exness symbols
+INTERVAL = "1min"                 # live price interval
 ATR_PERIOD = 14
 MIN_CONFIDENCE = 70
-COOLDOWN = 300  # 5 min
+COOLDOWN_PER_ASSET = 300  # 5 min
 
 TELEGRAM_TOKEN = "8601674578:AAHycLEx-6M_r_JHFuS96oKuLTBJqefwKnk"
 CHAT_ID = "992623579"
+TWELVEDATA_API_KEY = "ab9ad3eac834482c84366b4e57ffefa7"
 
 last_signal_time = {symbol: 0 for symbol in SYMBOLS}
+update_offset = None
 
 # ---------------- HELPERS ----------------
-def send_telegram(msg):
+def send_telegram(message):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+        requests.post(url, data={"chat_id": CHAT_ID, "text": message})
     except Exception as e:
         print("Telegram error:", e)
 
-def fetch_tradingview(symbol, interval="1"):
-    """
-    Fetch live price bars from TradingView public JSON.
-    Interval in minutes: "1", "5", "15", etc.
-    Returns pandas DataFrame with Open, High, Low, Close
-    """
+def fetch_data(symbol):
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={INTERVAL}&outputsize=30&apikey={TWELVEDATA_API_KEY}"
     try:
-        url = f"https://tvc4.forexpros.com/68b9f27a1bb11e1f1aXXXX/1/{symbol}/history?resolution={interval}&from={int(time.time())-3600}&to={int(time.time())}"
-        # Note: Replace with a valid TradingView endpoint or use a free API like TwelveData.
-        # For now, using a placeholder
-        res = requests.get(url, timeout=5)
-        data = res.json()
-        df = pd.DataFrame({
-            "Open": data["o"],
-            "High": data["h"],
-            "Low": data["l"],
-            "Close": data["c"]
-        })
+        res = requests.get(url, timeout=5).json()
+        if "values" not in res:
+            print(f"Fetch error ({symbol}):", res)
+            return None
+        df = pd.DataFrame(res["values"])
+        df = df[::-1]  # reverse to oldest -> newest
+        df[['open','high','low','close']] = df[['open','high','low','close']].astype(float)
         return df
     except Exception as e:
         print(f"Fetch error ({symbol}):", e)
@@ -54,31 +44,40 @@ def fetch_tradingview(symbol, interval="1"):
 
 def atr(df):
     tr = pd.concat([
-        df['High'] - df['Low'],
-        abs(df['High'] - df['Close'].shift()),
-        abs(df['Low'] - df['Close'].shift())
+        df['high'] - df['low'],
+        abs(df['high'] - df['close'].shift()),
+        abs(df['low'] - df['close'].shift())
     ], axis=1).max(axis=1)
     return tr.rolling(ATR_PERIOD).mean()
 
+# ---------------- SIGNAL LOGIC ----------------
 def detect_bos(df):
-    last = df['Close'].iloc[-1]
-    high = df['High'].iloc[-3:-1].max()
-    low = df['Low'].iloc[-3:-1].min()
-    if last > high: return "BUY"
-    elif last < low: return "SELL"
+    try:
+        last = df['close'].iloc[-1]
+        high = df['high'].iloc[-3:-1].max()
+        low = df['low'].iloc[-3:-1].min()
+        if last > high: return "BUY"
+        if last < low: return "SELL"
+    except: pass
     return None
 
 def detect_ob(df):
-    last = df.iloc[-1]
-    body = abs(last['Close'] - last['Open'])
-    rng = last['High'] - last['Low']
-    if rng == 0: return None
-    if body / rng > 0.6:
-        return "BUY" if last['Close'] > last['Open'] else "SELL"
+    try:
+        last = df.iloc[-1]
+        body = abs(last['close'] - last['open'])
+        rng = last['high'] - last['low']
+        if rng == 0: return None
+        if body / rng > 0.6:
+            return "BUY" if last['close'] > last['open'] else "SELL"
+    except: pass
     return None
 
 def momentum_strength(df):
-    return abs(df['Close'].iloc[-1] - df['Close'].iloc[-5])
+    try:
+        if len(df['close']) < 5: return 0
+        return abs(df['close'].iloc[-1] - df['close'].iloc[-5])
+    except:
+        return 0
 
 def calculate_confidence(bos, ob, trend, momentum, atr_val):
     score = 0
@@ -86,40 +85,73 @@ def calculate_confidence(bos, ob, trend, momentum, atr_val):
     if ob: score += 25
     if bos == ob: score += 20
     if trend == bos: score += 15
-    if momentum > 0.8 * atr_val: score += 15
+    if momentum > (0.8 * atr_val): score += 15
     return min(score, 100)
 
 def calculate_sl_tp(price, atr_val, direction):
     if direction == "BUY":
-        return price - atr_val, price + 1.5*atr_val
+        return price - atr_val, price + 1.5 * atr_val
     else:
-        return price + atr_val, price - 1.5*atr_val
+        return price + atr_val, price - 1.5 * atr_val
 
-# ---------------- SIGNAL ----------------
+# ---------------- SNIPER SIGNAL ----------------
 def generate_signal():
     signal_sent = False
     for symbol in SYMBOLS:
-        if time.time() - last_signal_time[symbol] < COOLDOWN:
-            continue
-        df = fetch_tradingview(symbol)
-        if df is None or len(df) < ATR_PERIOD:
-            continue
-        atr_val = atr(df).iloc[-1]
-        bos = detect_bos(df)
-        ob = detect_ob(df)
-        trend = "BUY" if df['Close'].iloc[-1] > df['Close'].iloc[-3] else "SELL"
-        momentum = momentum_strength(df)
-        confidence = calculate_confidence(bos, ob, trend, momentum, atr_val)
-        if confidence >= MIN_CONFIDENCE:
-            direction = bos if bos else trend
-            price = df['Close'].iloc[-1]
-            sl, tp = calculate_sl_tp(price, atr_val, direction)
-            msg = f"🎯 SNIPER SIGNAL 🎯\nSymbol: {symbol}\nDirection: {direction}\nEntry: {price}\nSL: {sl}\nTP: {tp}\nConfidence: {confidence}%"
-            send_telegram(msg)
-            last_signal_time[symbol] = time.time()
-            signal_sent = True
+        try:
+            if time.time() - last_signal_time.get(symbol, 0) < COOLDOWN_PER_ASSET:
+                continue
+
+            df = fetch_data(symbol)
+            if df is None or df.empty: continue
+
+            atr_val = atr(df).iloc[-1]
+            if pd.isna(atr_val) or atr_val == 0: continue
+
+            bos = detect_bos(df)
+            ob = detect_ob(df)
+            trend = "BUY" if df['close'].iloc[-1] > df['close'].iloc[-3] else "SELL"
+            momentum = momentum_strength(df)
+            confidence = calculate_confidence(bos, ob, trend, momentum, atr_val)
+
+            if confidence >= MIN_CONFIDENCE:
+                direction = bos if bos else trend
+                price = df['close'].iloc[-1]
+                sl, tp = calculate_sl_tp(price, atr_val, direction)
+
+                msg = (
+                    f"🎯 SNIPER SIGNAL 🎯\n"
+                    f"Asset: {symbol}\n"
+                    f"Direction: {direction}\n"
+                    f"Entry: {price:.2f}\n"
+                    f"SL: {sl:.2f} | TP: {tp:.2f}\n"
+                    f"Confidence: {confidence}% 🔥"
+                )
+                send_telegram(msg)
+                last_signal_time[symbol] = time.time()
+                signal_sent = True
+        except Exception as e:
+            print(f"Signal error ({symbol}):", e)
+
     if not signal_sent:
         send_telegram("⏳ I am currently sniping...")
+
+# ---------------- COMMANDS ----------------
+def check_commands():
+    global update_offset
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+        if update_offset:
+            url += f"?offset={update_offset}"
+        res = requests.get(url, timeout=5).json()
+        for upd in res.get("result", []):
+            if "message" in upd:
+                text = upd["message"].get("text", "").lower()
+                if text == "/test":
+                    send_telegram("✅ FAST PRO SNIPER BOT ACTIVE 🔥")
+            update_offset = upd["update_id"] + 1
+    except:
+        pass
 
 # ---------------- THREADS ----------------
 def run_signals():
@@ -129,20 +161,12 @@ def run_signals():
 
 def run_commands():
     while True:
-        try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-            res = requests.get(url, timeout=5).json()
-            for upd in res.get("result", []):
-                if "message" in upd:
-                    text = upd["message"].get("text", "").lower()
-                    if text == "/test":
-                        send_telegram("✅ FAST PRO SNIPER BOT ACTIVE 🔥")
-        except:
-            pass
+        check_commands()
         time.sleep(2)
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
+    print("🚀 FAST PRO SNIPER BOT RUNNING...")
     threading.Thread(target=run_signals, daemon=True).start()
     threading.Thread(target=run_commands, daemon=True).start()
     while True:
