@@ -1,4 +1,4 @@
-# 🚀 XAUUSD ELITE SNIPER PRO BOT (TWELVEDATA LIVE MARKET)
+# 🚀 XAUUSD ELITE M1 SCALPER BOT (TWELVEDATA LIVE MARKET)
 
 import requests
 import pandas as pd
@@ -8,8 +8,8 @@ from datetime import datetime
 import pytz
 
 # ---------------- CONFIG ----------------
-SYMBOL = "XAU/USD"   # Gold
-API_KEY = "c3c3a13b07cb486b81622aa58a73e9c0"  # Twelve Data API key
+SYMBOL = "XAU/USD"
+API_KEY = "c3c3a13b07cb486b81622aa58a73e9c0"  # Updated Twelve Data API
 TELEGRAM_TOKEN = "8601674578:AAHycLEx-6M_r_JHFuS96oKuLTBJqefwKnk"
 CHAT_ID = "992623579"
 
@@ -30,21 +30,14 @@ def send_telegram(msg):
     except Exception as e:
         print("Telegram error:", e)
 
-# ---------------- SESSION ----------------
-def is_killzone():
-    dubai = pytz.timezone("Asia/Dubai")
-    hour = datetime.now(dubai).hour
-    return (11 <= hour <= 14) or (16 <= hour <= 19)
-
 # ---------------- DATA ----------------
 def fetch_data(retries=3, delay=1):
-    """Fetch live 1-min XAU/USD data from Twelve Data with retries"""
     for attempt in range(retries):
         try:
             url = f"https://api.twelvedata.com/time_series?symbol={SYMBOL}&interval=1min&outputsize=100&apikey={API_KEY}"
             res = requests.get(url, timeout=5).json()
             if "values" not in res:
-                print(f"Attempt {attempt+1}: Market data unavailable or API limit reached:", res)
+                print(f"Attempt {attempt+1}: Market data unavailable or API limit reached")
                 time.sleep(delay)
                 continue
             df = pd.DataFrame(res["values"])[::-1]  # oldest to newest
@@ -72,15 +65,10 @@ def momentum(df):
     return abs(df['close'].iloc[-1] - df['close'].iloc[-5])
 
 # ---------------- SIGNAL ENGINE ----------------
-def generate_signal():
+def generate_signal(be_ready=False):
     global last_signal, last_sl_tp
-
     df = fetch_data()
-    if df is None or df.empty:
-        send_telegram("⚠️ Market data unavailable for XAUUSD. Retrying...")
-        df = fetch_data()
-        if df is None or df.empty:
-            return
+    if df is None or df.empty: return
 
     atr_val = atr(df).iloc[-1]
     if pd.isna(atr_val) or atr_val == 0: return
@@ -99,8 +87,12 @@ def generate_signal():
 
     if confidence < MIN_CONFIDENCE: return
 
-    if last_signal != direction:
-        send_telegram("⚠️ ELITE SNIPER ALERT - GOLD SETUP FORMING... Get ready!")
+    if be_ready:
+        send_telegram(f"⚠️ BE READY — {direction} ZONE NOW! Prepare!")
+        return
+
+    entry_low = price - 0.05 * atr_val
+    entry_high = price + 0.05 * atr_val
 
     if direction == "BUY":
         sl = price - 0.5 * atr_val
@@ -109,11 +101,8 @@ def generate_signal():
         sl = price + 0.5 * atr_val
         tp = price - 1.5 * atr_val
 
-    entry_low = price - 0.1 * atr_val
-    entry_high = price + 0.1 * atr_val
-
     msg = (
-        f"🚀 ELITE GOLD SNIPER SIGNAL\n"
+        f"🚀 ELITE GOLD M1 SCALPER SIGNAL\n"
         f"━━━━━━━━━━━━━━━\n"
         f"📊 XAUUSD (1M)\n"
         f"📍 {direction}\n"
@@ -139,7 +128,7 @@ def check_commands():
             if "message" in upd:
                 text = upd["message"].get("text", "").lower()
                 if text == "/test":
-                    send_telegram("🔥 ELITE GOLD SNIPER BOT ACTIVE")
+                    send_telegram("🔥 ELITE GOLD M1 SCALPER BOT ACTIVE")
                 elif text == "/signal":
                     generate_signal()
                 elif text == "/price":
@@ -152,21 +141,25 @@ def check_commands():
     except Exception as e:
         print("Command error:", e)
 
-# ---------------- LOOP ----------------
-def run_bot():
-    while True:
-        if is_killzone():
-            generate_signal()
-        time.sleep(60)
-
-def run_commands():
+def check_commands_loop():
     while True:
         check_commands()
         time.sleep(2)
 
+# ---------------- AUTO SCALP LOOP ----------------
+def run_auto_scalper():
+    while True:
+        df = fetch_data()
+        if df is not None:
+            generate_signal(be_ready=True)  # BE READY alert 10 sec
+            time.sleep(10)
+            generate_signal(be_ready=False)  # Actual M1 signal
+        time.sleep(60)  # Wait 1 minute for next candle
+
 # ---------------- START ----------------
 if __name__ == "__main__":
-    print("🚀 ELITE GOLD SNIPER BOT RUNNING...")
-    threading.Thread(target=run_bot, daemon=True).start()
-    threading.Thread(target=run_commands, daemon=True).start()
-    while True: time.sleep(1)
+    print("🚀 ELITE GOLD M1 SCALPER BOT RUNNING...")
+    threading.Thread(target=run_auto_scalper, daemon=True).start()
+    threading.Thread(target=check_commands_loop, daemon=True).start()
+    while True:
+        time.sleep(1)
