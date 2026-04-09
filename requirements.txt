@@ -2,4 +2,4 @@ websocket-client
 pandas
 requests
 pytz
-python-telegram-bot
+python-telegram-bot==20.7
