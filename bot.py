@@ -1,5 +1,6 @@
 # ⚡ ROYAL FAST M1 SCALPER (XAUUSD & BTCUSD)
 # 🎯 REAL-TIME ACCURACY WITH MT5 COMPATIBLE PRICES
+# ✅ FIXED: No more "Conflict" errors
 
 import websocket
 import json
@@ -11,12 +12,22 @@ from datetime import datetime
 import pytz
 import asyncio
 import os
+import signal
+import sys
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # ---------------- CONFIG ----------------
 TELEGRAM_TOKEN = "8601674578:AAHycLEx-6M_r_JHFuS96oKuLTBJqefwKnk"
 CHAT_ID = "992623579"
+
+# Force delete any existing webhook on startup (Fixes conflict error)
+try:
+    webhook_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook"
+    response = requests.get(webhook_url, timeout=5)
+    print(f"✅ Webhook cleared: {response.json()}")
+except Exception as e:
+    print(f"Webhook clear error: {e}")
 
 # MT5 Price Offset (adjust these to match your broker)
 MT5_OFFSET = {
@@ -32,7 +43,7 @@ RSI_PERIOD = 7
 RSI_OVERBOUGHT = 70
 RSI_OVERSOLD = 30
 
-# Trading Hours (UTC) - 10 AM GMT+4 is 6 AM UTC
+# Trading Hours (UTC)
 TRADING_START_HOUR = 6
 TRADING_END_HOUR = 22
 
@@ -41,15 +52,29 @@ klines = {"BTCUSD": [], "XAUUSD": []}
 last_signal_time = {"BTCUSD": 0, "XAUUSD": 0}
 bot_running = True
 
-# Global bot instance for sending messages
+# Global bot instance
 application = None 
+
+# ---------------- GRACEFUL SHUTDOWN ----------------
+def handle_shutdown(signum, frame):
+    global bot_running, application
+    print("🛑 Received shutdown signal, stopping bot...")
+    bot_running = False
+    if application:
+        try:
+            application.stop()
+        except:
+            pass
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, handle_shutdown)
+signal.signal(signal.SIGTERM, handle_shutdown)
 
 # ---------------- PRICE FETCHING ----------------
 async def fetch_price(symbol):
     """Fetch current price from reliable source"""
     try:
         if symbol == "XAUUSD":
-            # Try multiple sources for better accuracy
             sources = [
                 "https://api.gold-api.com/price/XAU/USD",
                 "https://metals-api.com/api/latest?access_key=demo&base=USD&symbols=XAU"
@@ -59,7 +84,6 @@ async def fetch_price(symbol):
                     res = requests.get(url, timeout=5).json()
                     if "price" in res:
                         price = float(res["price"])
-                        # Apply MT5 offset if needed
                         price += MT5_OFFSET.get("XAUUSD", 0)
                         return price
                     elif "rates" in res and "XAU" in res["rates"]:
@@ -74,7 +98,6 @@ async def fetch_price(symbol):
             url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
             res = requests.get(url, timeout=5).json()
             price = float(res["price"])
-            # Apply MT5 offset if needed
             price += MT5_OFFSET.get("BTCUSD", 0)
             return price
     except Exception as e:
@@ -92,7 +115,7 @@ async def send_telegram(msg, chat_id=CHAT_ID):
     else:
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-            requests.post(url, data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"})
+            requests.post(url, data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"}, timeout=5)
         except Exception as e:
             print(f"Telegram fallback send error: {e}")
 
@@ -227,7 +250,6 @@ def on_btc_message(ws, message):
             k = data["k"]
             if k["x"]:
                 price = float(k["c"])
-                # Apply MT5 offset
                 price += MT5_OFFSET.get("BTCUSD", 0)
                 
                 klines["BTCUSD"].append({
@@ -243,6 +265,7 @@ def on_btc_message(ws, message):
                 if len(klines["BTCUSD"]) >= ATR_PERIOD + 10:
                     df = pd.DataFrame(klines["BTCUSD"])
                     df = calculate_indicators(df)
+                    # Create new event loop for async
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     loop.run_until_complete(check_signal("BTCUSD", df))
@@ -251,9 +274,14 @@ def on_btc_message(ws, message):
         print(f"BTC message error: {e}")
 
 def run_btc_ws():
-    ws_url = "wss://fstream.binance.com/ws/btcusdt@kline_1m"
-    ws = websocket.WebSocketApp(ws_url, on_message=on_btc_message)
-    ws.run_forever()
+    while bot_running:
+        try:
+            ws_url = "wss://fstream.binance.com/ws/btcusdt@kline_1m"
+            ws = websocket.WebSocketApp(ws_url, on_message=on_btc_message)
+            ws.run_forever()
+        except Exception as e:
+            print(f"BTC WebSocket error: {e}, reconnecting in 5 seconds...")
+            time.sleep(5)
 
 # ---------------- COMMAND HANDLERS ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -299,7 +327,6 @@ async def signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if signal_xau:
             messages.append(signal_xau)
         else:
-            # Show current market conditions
             latest = df_xau.iloc[-1]
             messages.append(
                 f"<b>🥇 XAUUSD - No Active Signal</b>\n"
@@ -414,8 +441,8 @@ async def main():
     await application.initialize()
     await application.start()
     
-    # Start polling
-    asyncio.create_task(application.updater.start_polling())
+    # Start polling with drop_pending_updates to avoid conflicts
+    await application.updater.start_polling(drop_pending_updates=True)
     
     print("✅ Bot started successfully!")
     await send_telegram("✅ ROYAL M1 SCALPER ONLINE - REAL-TIME MODE\n\nSignals will be sent automatically when conditions are met.")
@@ -428,5 +455,10 @@ async def main():
     await fetch_gold_price_loop()
 
 if __name__ == "__main__":
-    # Run the main function
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("🛑 Bot stopped by user")
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        sys.exit(1)
