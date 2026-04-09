@@ -13,14 +13,17 @@ import asyncio
 import os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-
 # ---------------- CONFIG ----------------
 TELEGRAM_TOKEN = os.environ.get('8601674578:AAHycLEx-6M_r_JHFuS96oKuLTBJqefwKnk')
-print(f"Token loaded: {'Yes' if TELEGRAM_TOKEN else 'No'}")  # Debug line
-if not TELEGRAM_TOKEN:
-    print("ERROR: TELEGRAM_TOKEN environment variable not set!")
-    exit(1)
 CHAT_ID = "992623579"
+
+# Check if token exists
+if not TELEGRAM_TOKEN:
+    print("❌ CRITICAL ERROR: TELEGRAM_TOKEN environment variable not set!")
+    print("Please add it in Railway dashboard: Variables tab → Add TELEGRAM_TOKEN")
+    exit(1)
+
+print(f"✅ Token loaded successfully (length: {len(TELEGRAM_TOKEN)})")
 
 # Scalping Parameters
 ATR_PERIOD = 14
