@@ -1,3 +1,4 @@
+
 import requests
 import pandas as pd
 import time
@@ -43,7 +44,7 @@ def fetch_data(retries=3, delay=5):
         try:
             # Using yfinance for reliable free data
             # GC=F is Gold Futures, very close to XAUUSD spot price
-            data = yf.download(SYMBOL, period="60d", interval="1d", progress=False)
+             data = yf.download(SYMBOL, period="100d", interval="1d", progress=False)
             
             if data.empty:
                 print(f"Attempt {attempt+1}: No data returned from yfinance.")
@@ -68,9 +69,15 @@ def fetch_data(retries=3, delay=5):
                 df[col] = df[col].astype(float)
             
             # Ensure enough data for indicators
-            if len(df) < max(ATR_PERIOD, EMA_SLOW) + 5:
-                print(f"Not enough data for analysis. Need at least {max(ATR_PERIOD, EMA_SLOW) + 5} days.")
-                return None
+            required_data_points = max(ATR_PERIOD, EMA_SLOW) + 5
+            if len(df) < required_data_points:
+                print(f"Not enough data for full analysis. Need at least {required_data_points} days, got {len(df)}.")
+                # Fallback: if not enough data for full analysis, try with what's available
+                if len(df) < ATR_PERIOD or len(df) < EMA_SLOW:
+                    print("Critically low data. Cannot proceed with signal generation.")
+                    return None
+
+            return df
 
             return df
         except Exception as e:
@@ -111,8 +118,8 @@ def is_downtrend(df, periods=5):
 
 def find_zones(df, window=10, threshold_atr_multiplier=1.5):
     zones = []
-    atr_val = atr(df).iloc[-1]
-    if pd.isna(atr_val) or atr_val == 0: return []
+    atr_val = atr(df).iloc[-1] if len(df) >= ATR_PERIOD else 0.01 # Fallback for ATR
+    if pd.isna(atr_val) or atr_val == 0: atr_val = 0.01 # Ensure ATR is never zero or NaN for calculations
 
     for i in range(window, len(df) - 1):
         high_range = df["high"].iloc[i-window:i].max()
@@ -139,12 +146,12 @@ def generate_signal(force_signal=False):
     df = fetch_data()
     if df is None or df.empty: return
 
-    atr_val = atr(df).iloc[-1]
-    if pd.isna(atr_val) or atr_val == 0: return
+    atr_val = atr(df).iloc[-1] if len(df) >= ATR_PERIOD else 0.01 # Fallback for ATR
+    if pd.isna(atr_val) or atr_val == 0: atr_val = 0.01 # Ensure ATR is never zero or NaN for calculations
 
-    ema_fast = ema(df, EMA_FAST).iloc[-1]
-    ema_slow = ema(df, EMA_SLOW).iloc[-1]
-    rsi_val = rsi(df).iloc[-1]
+    ema_fast = ema(df, EMA_FAST).iloc[-1] if len(df) >= EMA_FAST else df["close"].iloc[-1]
+    ema_slow = ema(df, EMA_SLOW).iloc[-1] if len(df) >= EMA_SLOW else df["close"].iloc[-1]
+    rsi_val = rsi(df).iloc[-1] if len(df) >= 14 else 50 # Fallback for RSI (neutral)
     price = df["close"].iloc[-1]
     
     current_trend = "UPTREND" if is_uptrend(df) else ("DOWNTREND" if is_downtrend(df) else "SIDEWAYS")
@@ -166,9 +173,10 @@ def generate_signal(force_signal=False):
 
     if primary_direction == "NONE":
         if force_signal:
-            send_telegram("⚠️ No strong EMA crossover found. Analysis continues...")
+            send_telegram("⚠️ No strong EMA crossover found. Analysis continues with trend.")
             primary_direction = "BUY" if ema_fast > ema_slow else "SELL" # Default to trend
         else:
+            print("No strong EMA crossover signal. Skipping.")
             return
 
     # Trend
